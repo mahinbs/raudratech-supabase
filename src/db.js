@@ -24,13 +24,21 @@ const isLocal = /@(localhost|127\.0\.0\.1)/.test(connectionString || '');
 // The app keeps its tables in a dedicated schema so it never collides with
 // anything else in the same database. Configurable via DB_SCHEMA (default "raudra").
 const APP_SCHEMA = (process.env.DB_SCHEMA || 'raudra').replace(/[^a-zA-Z0-9_]/g, '');
-const pool = new Pool({
+const poolConfig = {
   connectionString,
   ssl: connectionString && !isLocal ? { rejectUnauthorized: false } : false,
-  max: 8,
-});
-// Every connection resolves unqualified names against our schema first.
-pool.on('connect', (client) => { client.query(`SET search_path TO ${APP_SCHEMA}, public`); });
+  // Keep the pool small — friendly to serverless (Vercel) and to Supabase poolers.
+  max: Number(process.env.PG_POOL_MAX) || (process.env.VERCEL ? 3 : 8),
+};
+// Resolve unqualified names against our schema first — without a per-connection
+// `SET` (which triggers a pg deprecation warning). For a local/direct Postgres we
+// pass it as a startup option. On Supabase (via the pooler) the schema is made the
+// role default instead — run once: ALTER ROLE postgres SET search_path = raudra, public;
+if (isLocal) poolConfig.options = `-c search_path=${APP_SCHEMA},public`;
+const pool = new Pool(poolConfig);
+// Against Supabase (via the pooler), the startup option isn't always honored, so
+// set the schema per new connection. (Local uses the option above and stays warning-free.)
+if (!isLocal) pool.on('connect', (client) => { client.query(`SET search_path TO ${APP_SCHEMA}, public`).catch(() => {}); });
 
 // ---- placeholder translation: `?` and `:name` -> `$n` ----
 const NAMED = /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)/g; // ignores ::type casts
@@ -208,8 +216,16 @@ async function init() {
   initialised = true;
 }
 
+// Cached init — safe to call on every request (used by the serverless entrypoint
+// and as a guard so settings/schema are ready before any query).
+let initPromise = null;
+function ensureInit() {
+  if (!initPromise) initPromise = init().catch((e) => { initPromise = null; throw e; });
+  return initPromise;
+}
+
 module.exports = {
-  pool, prepare, exec, init,
+  pool, prepare, exec, init, ensureInit,
   STAGES, OPEN_STAGES, ACTIVITY_TYPES,
   getSetting, setSetting, hashPassword, verifyPassword, ensureDepartment,
 };
