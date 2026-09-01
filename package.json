@@ -1,0 +1,15 @@
+{
+  "name": "raudratech-tender-crm",
+  "version": "2.0.0",
+  "description": "Government Follow-up & Tender Pipeline CRM for Raudratech — Supabase (Postgres) edition",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node src/seed.js",
+    "initdb": "node -e \"require('./src/db').init().then(()=>{console.log('Schema ready');process.exit(0)})\""
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}
